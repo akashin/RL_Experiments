@@ -1,6 +1,8 @@
 import tensorflow as tf
 import numpy as np
 import cv2
+import sys
+
 
 from scipy.ndimage.filters import maximum_filter
 
@@ -14,21 +16,18 @@ from memory import Episode, EpisodeHistory
 # TODO: Think where this should be located
 def transformImage(image):
     image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    thr, image = cv2.threshold(image, 1, 255, cv2.THRESH_BINARY)
+    _, image = cv2.threshold(image, 1, 255, cv2.THRESH_BINARY)
     image = maximum_filter(image, size=(2, 4))
-    thr, image = cv2.threshold(image, 1, 255, cv2.THRESH_BINARY)
+    _, image = cv2.threshold(image, 1, 255, cv2.THRESH_BINARY)
     image = cv2.resize(image, (80, 80), cv2.INTER_AREA)
-    thr, image = cv2.threshold(image, 1, 255, cv2.THRESH_BINARY)
-    image = np.reshape(image, (80, 80, 1)).astype(np.float) / 255.0
-    return image
+    _, image = cv2.threshold(image, 1, 255, cv2.THRESH_BINARY)
+    return np.reshape(image, (80, 80, 1)).astype(np.uint8)
 
 
 class AgentTrainer(object):
     def __init__(self, config):
         # Create session to store trained parameters
-        self.session = tf.Session(
-            config=tf.ConfigProto(
-                intra_op_parallelism_threads=config["num_threads"]))
+        self.session = tf.Session()
 
         self.action_count = config["action_count"]
 
@@ -57,6 +56,7 @@ class AgentTrainer(object):
         self.FRAME_PER_ACTION = config["frame_per_action"]
         self.GAMMA = config["gamma"]
         self.LOG_PERIOD = config["log_period"]
+        self.BATCH_SIZE = config["batch_size"]
 
     def init_training(self):
         # Initialize training parameters
@@ -100,12 +100,13 @@ class AgentTrainer(object):
         return action_index
 
     def process_frame(self, screen, reward, terminal):
-        if not self.last_action_index:
+        if self.last_action_index is None:
             self.reset_state(screen)
             return
 
         a_t = np.zeros([self.action_count])
         a_t[self.last_action_index] = 1
+
         # scale down epsilon
         if self.epsilon > self.FINAL_EPSILON and self.t > self.OBSERVE:
             self.epsilon -= (self.INITIAL_EPSILON - self.FINAL_EPSILON) / self.EXPLORE
@@ -134,6 +135,7 @@ class AgentTrainer(object):
                 self.epsilon,
                 self.episode_history.get_average_stats(),
                 self.game_history.get_average_stats()))
+            sys.stdout.flush()
 
         self.match_reward += r_t * self.gamma_pow
         self.match_playtime += 1

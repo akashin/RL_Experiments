@@ -2,68 +2,50 @@
 import logging
 import os
 import sys
-sys.path.append("games/")
-import pong_fun as game # whichever is imported "as game" will be used
 
 import tensorflow as tf
-import gym
+import numpy as np
 
 from agent_trainer import AgentTrainer
+
+import gym
+sys.path.append("games/")
+import pong_fun as game # whichever is imported "as game" will be used
 
 # Model
 GAME = "pong"
 ACTIONS = 3  # number of valid actions
-GAMMA = 0.99  # decay rate of past observations
-OBSERVE = 10000.  # timesteps to observe before training
-EXPLORE = 2000000.  # frames over which to anneal epsilon
-FINAL_EPSILON = 0.0001  # final value of epsilon
-INITIAL_EPSILON = 1  # starting value of epsilon
-REPLAY_MEMORY = 100000  # number of previous transitions to remember
-MATCH_MEMORY = 1000  # number of previous matches to remember
-BATCH_SIZE = 64  # size of minibatch
-FRAME_PER_ACTION = 1  # ammount of frames that are skipped before every action
 MODEL_PATH = "./saved_networks"  # path to saved models
 SNAPSHOT_PERIOD = 10000  # periodicity of saving current model
-
-# Training
-NUM_THREADS = 3  # number of threads for tensorflow session
+SEED = 42
 
 # Logging
-LOG_PERIOD = 100  # periodicity of logging
 LOG_PATH = "./logs"  # path to logs
-LOG_FILE = os.path.join(LOG_PATH, "tf.log")  # path to logs
-LOG_TIMINGS = False  # Whether to log controller speed on every tick
-tf.logging.set_verbosity(tf.logging.DEBUG)
-
-handler = logging.FileHandler(LOG_FILE)
-handler.setLevel(logging.DEBUG)
-handler.setFormatter(logging.Formatter(logging.BASIC_FORMAT, None))
-logging.getLogger('tensorflow').addHandler(handler)
 
 config = {
-    "num_threads": 3,
     "action_count": ACTIONS,
-    "gamma": 0.99,
-    "observe_step_count": 10000,
-    "explore_step_count": 2000000,
-    "initial_epsilon": 1.0,
-    "final_epsilon": 0.0001,
-    "replay_memory_size": 100000,
-    "match_memory_size": 1000,
-    "batch_size": 64,
-    "frame_per_action": 1,
-    "log_period": 100,
+    "gamma": 0.99,  # decay rate of past observations
+    "observe_step_count": 10000,  # timesteps to observe before training
+    "explore_step_count": 2000000,  # frames over which to anneal epsilon
+    "initial_epsilon": 1.0,  # starting value of epsilon
+    "final_epsilon": 0.0001,  # final value of epsilon
+    "replay_memory_size": 100000,  # number of previous transitions to remember
+    "match_memory_size": 1000,  # number of previous matches to remember
+    "batch_size": 64,  # size of minibatch
+    "frame_per_action": 1,  # ammount of frames that are skipped before every action
+    "log_period": 100,  # periodicity of logging
 }
 
 
 def vectorFromAction(action_index):
-    import numpy as np
     a = np.zeros(ACTIONS)
     a[action_index] = 1
     return a
 
 
 def playGame():
+    np.random.seed(SEED)
+    tf.set_random_seed(SEED)
     # Open up a game state to communicate with emulator
     # env = gym.make("Pong-v0")
     env = game.GameState()
@@ -98,6 +80,7 @@ def playGame():
 
             if terminal:
                 break
+
 
 
 def main():
