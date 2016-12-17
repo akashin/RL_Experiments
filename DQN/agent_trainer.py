@@ -63,7 +63,7 @@ class AgentTrainer(object):
         self.session.run(tf.global_variables_initializer())
         self.epsilon = self.INITIAL_EPSILON
         self.t = 0
-        self.last_action_index = 0
+        self.last_action_index = None
 
     def load_model(self, path):
         checkpoint = tf.train.get_checkpoint_state(path)
