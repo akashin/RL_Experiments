@@ -10,19 +10,21 @@ MODEL_PATH = "./saved_networks"  # path to saved models
 SNAPSHOT_PERIOD = 10000  # periodicity of saving current model
 SEED = 42
 
-config = {
-    "action_count": 3,  # number of valid actions
-    "gamma": 0.99,  # decay rate of past observations
-    "observe_step_count": 10000,  # timesteps to observe before training
-    "explore_step_count": 2000000,  # frames over which to anneal epsilon
-    "initial_epsilon": 1.0,  # initial value of epsilon
-    "final_epsilon": 0.0001,  # final value of epsilon
-    "replay_memory_size": 100000,  # number of previous transitions to remember
-    "match_memory_size": 1000,  # number of previous matches to remember
-    "batch_size": 64,  # size of minibatch
-    "frame_per_action": 1,  # ammount of frames that are skipped before every action
-    "log_period": 100,  # periodicity of logging
-}
+
+def createGameConfig(env):
+    return {
+        "action_count": env.action_space.n,  # number of valid actions
+        "gamma": 0.99,  # decay rate of past observations
+        "observe_step_count": 10000,  # timesteps to observe before training
+        "explore_step_count": 2000000,  # frames over which to anneal epsilon
+        "initial_epsilon": 1.0,  # initial value of epsilon
+        "final_epsilon": 0.0001,  # final value of epsilon
+        "replay_memory_size": 100000,  # number of previous transitions to remember
+        "match_memory_size": 1000,  # number of previous matches to remember
+        "batch_size": 64,  # size of minibatch
+        "frame_per_action": 1,  # ammount of frames that are skipped before every action
+        "log_period": 100,  # periodicity of logging
+    }
 
 
 def playGame(game_name):
@@ -36,7 +38,7 @@ def playGame(game_name):
     else:
         env = gym.make(game_name)
 
-    trainer = AgentTrainer(config)
+    trainer = AgentTrainer(createGameConfig(env))
     trainer.init_training()
     trainer.load_model(MODEL_PATH)
 
@@ -67,7 +69,7 @@ def playGame(game_name):
 
 
 def main():
-    playGame("PyGamePong-v0")
+    playGame("SpaceInvaders-v0")
 
 
 if __name__ == "__main__":
