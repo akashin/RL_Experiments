@@ -1,30 +1,26 @@
 #!/usr/bin/env python
-#Modified from http://www.pygame.org/project-Very+simple+Pong+game-816-.html
+# Modified from http://www.pygame.org/project-Very+simple+Pong+game-816-.html
 
-import numpy
 import pygame
 import os
 from pygame.locals import *
-from sys import exit
-import random
 import pygame.surfarray as surfarray
-import matplotlib.pyplot as plt
 
 position = 5, 325
 os.environ['SDL_VIDEO_WINDOW_POS'] = str(position[0]) + "," + str(position[1])
 pygame.init()
-screen = pygame.display.set_mode((640,480),0,32)
-#screen = pygame.display.set_mode((640,480),pygame.NOFRAME)
-#Creating 2 bars, a ball and background.
-back = pygame.Surface((640,480))
+screen = pygame.display.set_mode((640, 480), 0, 32)
+
+# Creating 2 bars, a ball and background.
+back = pygame.Surface((640, 480))
 background = back.convert()
-background.fill((0,0,0))
+background.fill((0, 0, 0))
 bar = pygame.Surface((10,50))
 bar1 = bar.convert()
-bar1.fill((0,255,255))
+bar1.fill((0, 255, 255))
 bar2 = bar.convert()
-bar2.fill((255,255,255))
-circ_sur = pygame.Surface((15,15))
+bar2.fill((255, 255, 255))
+circ_sur = pygame.Surface((15, 15))
 circ = pygame.draw.circle(circ_sur,(255,255,255),(15//2,15//2),15//2)
 circle = circ_sur.convert()
 circle.set_colorkey((0,0,0))
@@ -37,7 +33,8 @@ HIT_REWARD = 0
 LOSE_REWARD = -1
 SCORE_REWARD = 1
 
-class GameState:
+
+class GameState(object):
     def __init__(self):
         self.bar1_x, self.bar2_x = 10. , 620.
         self.bar1_y, self.bar2_y = 215. , 215.
@@ -53,13 +50,13 @@ class GameState:
         if sum(input_vect) != 1:
             raise ValueError('Multiple input actions!')
 
-        if input_vect[1] == 1:#Key up
+        if input_vect[1] == 1:  # Key up
             self.bar1_move = -ai_speed
-        elif input_vect[2] == 1:#Key down
+        elif input_vect[2] == 1:  # Key down
             self.bar1_move = ai_speed
         else: # don't move
             self.bar1_move = 0
-                
+
         self.score1 = font.render(str(self.bar1_score), True,(255,255,255))
         self.score2 = font.render(str(self.bar2_score), True,(255,255,255))
 
@@ -136,3 +133,30 @@ class GameState:
             terminal = True
 
         return image_data, reward, terminal
+
+
+def vectorFromAction(n_actions, action_index):
+    import numpy as np
+    a = np.zeros(n_actions)
+    a[action_index] = 1
+    return a
+
+
+class PongEnv(object):
+    def __init__(self):
+        from gym import spaces
+        self.game_state = GameState()
+        self.action_space = spaces.Discrete(3)
+
+    def reset(self):
+        x_t, _, _ = self.game_state.frame_step(
+            vectorFromAction(self.action_space.n, 0))
+        return x_t
+
+    def render(self):
+        pass
+
+    def step(self, action_index):
+        x_t1, r_t, terminal = self.game_state.frame_step(
+            vectorFromAction(self.action_space.n, action_index))
+        return x_t1, r_t, terminal, 0
