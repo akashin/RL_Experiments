@@ -5,8 +5,18 @@ import tensorflow as tf
 import numpy as np
 import gym
 
+
+# Experiment description.
+GAME = "gym_pong"
+MODEL = "dqn"
+VERSION = 1  # Bump this for each new experiment.
+
+EXPERIMENT_PATH = os.path.join("/home/acid", GAME, MODEL, str(VERSION))
+# "/home/acid/Repos/HSE_AI_Labs/Lab_4/saved_networks"  # path to saved models
+MODEL_PATH = os.path.join(EXPERIMENT_PATH, "checkpoints")
+LOG_PATH = os.path.join(EXPERIMENT_PATH, "logs")
+
 # Model
-MODEL_PATH = "./saved_networks"  # path to saved models
 SNAPSHOT_PERIOD = 10000  # periodicity of saving current model
 SEED = 42
 
@@ -24,6 +34,7 @@ def createGameConfig(env):
         "batch_size": 256,  # size of minibatch
         "frame_per_action": 1,  # ammount of frames that are skipped before every action
         "log_period": 100,  # periodicity of logging
+        "experiment_path": EXPERIMENT_PATH,
     }
 
 
