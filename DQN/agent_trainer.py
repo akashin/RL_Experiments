@@ -2,6 +2,8 @@ import tensorflow as tf
 import numpy as np
 import cv2
 import sys
+import os
+import datetime
 
 
 from scipy.ndimage.filters import maximum_filter
@@ -29,10 +31,20 @@ class AgentTrainer(object):
         # Create session to store trained parameters
         self.session = tf.Session()
 
+        # Create and configure logging directories and file handles.
+        experiment_path = config["experiment_path"]
+        os.makedirs(experiment_path, exist_ok=True)
+        summary_dir = os.path.join(experiment_path, "summary")
+        os.makedirs(summary_dir, exist_ok=True)
+        self.summary_writer = tf.summary.FileWriter(summary_dir)
+        self.summary_output = open(os.path.join(experiment_path, "log.txt"), "a")
+
         self.action_count = config["action_count"]
 
         # Create agent for training
         self.agent = DQNAgent(self.action_count)
+        self.step = tf.Variable(0, name="step")
+        self.increment_step = self.step.assign_add(1)
 
         # Create memory to store observations
         self.memory = ExperienceMemory(config["replay_memory_size"])
@@ -61,9 +73,19 @@ class AgentTrainer(object):
     def init_training(self):
         # Initialize training parameters
         self.session.run(tf.global_variables_initializer())
-        self.epsilon = self.INITIAL_EPSILON
-        self.t = 0
+        self.t = self.step.eval(self.session)
+        self.epsilon = self.compute_epsilon(self.t)
         self.last_action_index = None
+
+    def compute_epsilon(self, t):
+        if t < self.OBSERVE:
+            return self.INITIAL_EPSILON
+
+        if t > self.EXPLORE:
+            return self.FINAL_EPSILON
+
+        alpha = t / self.EXPLORE
+        return self.INITIAL_EPSILON * (1 - alpha) + self.FINAL_EPSILON * alpha
 
     def load_model(self, path):
         checkpoint = tf.train.get_checkpoint_state(path)
@@ -74,7 +96,8 @@ class AgentTrainer(object):
             print("Could not find old network weights")
 
     def save_model(self, path):
-        # Replace with os.path.join
+        if not os.path.exists(path):
+            os.makedirs(path)
         self.saver.save(self.session, path + "/dqn", global_step=self.t)
 
     def reset_state(self, initial_state):
@@ -108,8 +131,7 @@ class AgentTrainer(object):
         a_t[self.last_action_index] = 1
 
         # scale down epsilon
-        if self.epsilon > self.FINAL_EPSILON and self.t > self.OBSERVE:
-            self.epsilon -= (self.INITIAL_EPSILON - self.FINAL_EPSILON) / self.EXPLORE
+        self.epsilon = self.compute_epsilon(self.t)
 
         # run the selected action and observe next state and reward
         x_t1, r_t = screen, reward
@@ -120,22 +142,34 @@ class AgentTrainer(object):
         self.memory.add_experience((self.s_t, a_t, r_t, s_t1, terminal))
 
         # only train if done observing
+        summaries = None
         if self.t > self.OBSERVE:
-            loss = self.make_train_step()
+            summaries, loss = self.make_train_step()
             self.episode_history.add_episode(Episode(loss))
 
         # update the old values
         self.s_t = s_t1
-        self.t += 1
+        self.t = self.session.run(self.increment_step)
 
         # print info
         if self.t % self.LOG_PERIOD == 0:
-            print("TIMESTEP {}, EPSILON {}, EPISODE_STATS {}, MATCH_STATS {}".format(
-                self.t,
-                self.epsilon,
-                self.episode_history.get_average_stats(),
-                self.game_history.get_average_stats()))
+            now_string = datetime.datetime.now().strftime("%Y.%m.%d_%H:%M:%S")
+            message = "TIME {}, TIMESTEP {}, EPSILON {}, EPISODE_STATS {}, MATCH_STATS {}\n".format(
+                    now_string,
+                    self.t,
+                    self.epsilon,
+                    self.episode_history.get_average_stats(),
+                    self.game_history.get_average_stats())
+
+            print(message)
             sys.stdout.flush()
+
+            self.summary_output.write(message)
+            self.summary_output.flush()
+
+            if summaries is not None:
+                self.summary_writer.add_summary(summaries, self.t)
+
 
         self.match_reward += r_t * self.gamma_pow
         self.match_playtime += 1
@@ -146,6 +180,13 @@ class AgentTrainer(object):
                 self.match_reward,
                 self.match_playtime,
                 reward))
+
+            episode_summary = tf.Summary()
+            episode_summary.value.add(simple_value=self.match_reward, node_name="match_reward", tag="match_reward")
+            episode_summary.value.add(simple_value=self.match_playtime, node_name="match_playtime", tag="match_playtime")
+            self.summary_writer.add_summary(episode_summary, self.t)
+            self.summary_writer.flush()
+
             self.reset_state(screen)
 
     def make_train_step(self):

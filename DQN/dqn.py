@@ -66,12 +66,20 @@ class DQNAgent(object):
         self.action_count = action_count
         self.state_placeholder, self.readout, self.h_fc1 = createNetwork(action_count)
 
-        # define the cost function
+        # Define the loss function.
         self.action_placeholder = tf.placeholder("float", [None, action_count])
         self.reward_placeholder = tf.placeholder("float", [None])
-        self.readout_action = tf.reduce_sum(tf.mul(self.readout, self.action_placeholder), reduction_indices=1)
-        self.cost = tf.reduce_mean(tf.square(self.reward_placeholder - self.readout_action))
-        self.train_step = tf.train.AdamOptimizer(1e-6).minimize(self.cost)
+        self.readout_action = tf.reduce_sum(tf.multiply(self.readout, self.action_placeholder), reduction_indices=1)
+        self.losses = tf.square(self.reward_placeholder - self.readout_action)
+        self.loss = tf.reduce_mean(self.losses)
+        self.train_step = tf.train.AdamOptimizer(1e-6).minimize(self.loss)
+
+        tf.summary.scalar("loss", self.loss),
+        tf.summary.histogram("loss_hist", self.losses),
+        tf.summary.histogram("q_values_hist", self.readout),
+        tf.summary.scalar("max_q_value", tf.reduce_max(self.readout))
+
+        self.summaries = tf.summary.merge_all()
 
     # think about putting observation as an argument here
     def act(self, session, state):
@@ -83,8 +91,8 @@ class DQNAgent(object):
 
     def train(self, session, reward_batch, action_batch, state_batch):
         # perform gradient step
-        _, loss = session.run([self.train_step, self.cost], feed_dict={
+        summaries, _, loss = session.run([self.summaries, self.train_step, self.loss], feed_dict={
             self.reward_placeholder: reward_batch,
             self.action_placeholder: action_batch,
             self.state_placeholder: state_batch})
-        return loss
+        return summaries, loss
