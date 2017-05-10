@@ -14,14 +14,14 @@ SEED = 42
 def createGameConfig(env):
     return {
         "action_count": env.action_space.n,  # number of valid actions
-        "gamma": 0.99,  # decay rate of past observations
+        "gamma": 1.0,  # decay rate of past observations
         "observe_step_count": 10000,  # timesteps to observe before training
         "explore_step_count": 2000000,  # frames over which to anneal epsilon
         "initial_epsilon": 1.0,  # initial value of epsilon
         "final_epsilon": 0.0001,  # final value of epsilon
         "replay_memory_size": 100000,  # number of previous transitions to remember
         "match_memory_size": 1000,  # number of previous matches to remember
-        "batch_size": 64,  # size of minibatch
+        "batch_size": 256,  # size of minibatch
         "frame_per_action": 1,  # ammount of frames that are skipped before every action
         "log_period": 100,  # periodicity of logging
     }
@@ -69,7 +69,7 @@ def playGame(game_name):
 
 
 def main():
-    playGame("SpaceInvaders-v0")
+    playGame("PyGamePong-v0")
 
 
 if __name__ == "__main__":
