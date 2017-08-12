@@ -73,8 +73,8 @@ def main():
     num_actions = env.action_space.n
     input_state_shape = list(env.observation_space.shape)
     input_state_ph = tf.placeholder(dtype=tf.float32, shape=[None] + input_state_shape, name="input")
-    # policy, value_function = build_separate_policy_and_value(input_state_ph, num_actions)
-    policy, value_function = build_shared_policy_and_value(input_state_ph, num_actions)
+    policy, value_function = build_separate_policy_and_value(input_state_ph, num_actions)
+    # policy, value_function = build_shared_policy_and_value(input_state_ph, num_actions)
 
     def select(data, indices):
         return tf.reduce_sum(data * tf.one_hot(indices, 2, axis=-1), axis=1)
@@ -84,7 +84,7 @@ def main():
     action_ph = tf.placeholder(dtype=tf.int32, shape=[None], name="action_taken")
     discounted_return_ph = tf.placeholder(dtype=tf.float32, shape=[None], name="discounted_return")
     gamma_power_ph = tf.placeholder(dtype=tf.float32, shape=[None], name="gamma_powers")
-    advantage = tf.stop_gradient(discounted_return_ph - value_function, name="advantage")
+    advantage = discounted_return_ph - value_function
     tf.summary.histogram("value_function", value_function)
     with tf.variable_scope("action_log_policy"):
         action_log_policy = select(tf.log(policy), action_ph)
@@ -93,30 +93,38 @@ def main():
     policy_vars = trainable_vars
     value_vars = trainable_vars
 
-    policy_gradients = tf.gradients(tf.reduce_sum(policy_step_size_ph * gamma_power_ph * advantage * action_log_policy), policy_vars,
-            name="policy_gradients")
-    value_gradients = tf.gradients(tf.reduce_sum(value_step_size_ph * advantage * value_function), value_vars,
-            name="value_gradients")
+    optimizer = tf.train.AdamOptimizer()
+    # optimizer = tf.train.GradientDescentOptimizer(learning_rate=policy_step_size_ph)
+
+    # policy_gradients = tf.gradients(tf.reduce_sum(policy_step_size_ph * gamma_power_ph * advantage * action_log_policy),
+            # policy_vars, name="policy_gradients")
+    # value_gradients = tf.gradients(tf.reduce_sum(value_step_size_ph * advantage * value_function),
+            # value_vars, name="value_gradients")
+
+    with tf.variable_scope("loss"):
+        policy_loss = -tf.reduce_sum(gamma_power_ph * tf.stop_gradient(advantage) * action_log_policy, name="policy_loss")
+        value_loss = tf.reduce_sum(tf.square(advantage), name="value_loss")
+        total_loss = policy_loss + value_loss
+        update_vars = optimizer.minimize(total_loss)
 
     tf.summary.scalar("step_size", policy_step_size_ph)
 
-    with tf.variable_scope("apply_gradients"):
-        with tf.variable_scope("update_policy"):
-            update_vars_ops = []
-            for var, grad in zip(policy_vars, policy_gradients):
-                if grad is not None:
-                    update_vars_ops.append(tf.assign_add(var, grad))
+    # with tf.variable_scope("apply_gradients"):
+        # with tf.variable_scope("update_policy"):
+            # update_vars_ops = []
+            # for var, grad in zip(policy_vars, policy_gradients):
+                # if grad is not None:
+                    # update_vars_ops.append(tf.assign_add(var, grad))
 
-        with tf.variable_scope("update_value"):
-            for var, grad in zip(value_vars, value_gradients):
-                if grad is not None:
-                    update_vars_ops.append(tf.assign_add(var, tf.clip_by_norm(grad, 1)))
+        # with tf.variable_scope("update_value"):
+            # for var, grad in zip(value_vars, value_gradients):
+                # if grad is not None:
+                    # update_vars_ops.append(tf.assign_add(var, tf.clip_by_norm(grad, 1)))
 
-        update_vars = tf.group(*update_vars_ops)
+        # update_vars = tf.group(*update_vars_ops)
 
     summaries_dir = "/tmp/cartpole/"
     merged = tf.summary.merge_all()
-
 
     with tf.train.SingularMonitoredSession() as session:
         summary_name = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
