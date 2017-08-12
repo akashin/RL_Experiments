@@ -12,18 +12,33 @@ from tensorflow.core.framework import summary_pb2
 GAMMA = 0.99
 
 
-def build_policy_and_value(input_state, num_actions):
-    with tf.variable_scope("policy"):
+def build_shared_policy_and_value(input_state, num_actions):
+    with tf.variable_scope("torso"):
         out = layers.flatten(input_state)
         out = layers.fully_connected(out, num_outputs=32, activation_fn=tf.nn.relu)
-        out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
-        policy = layers.softmax(out)
+        with tf.variable_scope("policy"):
+            policy_out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
+            policy = layers.softmax(policy_out)
 
-    with tf.variable_scope("value"):
-        out = layers.flatten(input_state)
-        out = layers.fully_connected(out, num_outputs=32, activation_fn=tf.nn.relu)
-        out = layers.fully_connected(out, num_outputs=1, activation_fn=None)
-        value = tf.reshape(out, [-1])
+        with tf.variable_scope("value"):
+            value_out = layers.fully_connected(out, num_outputs=1, activation_fn=None)
+            value = tf.reshape(value_out, [-1])
+
+    return policy, value
+
+def build_separate_policy_and_value(input_state, num_actions):
+    with tf.variable_scope("torso"):
+        with tf.variable_scope("policy"):
+            out = layers.flatten(input_state)
+            out = layers.fully_connected(out, num_outputs=32, activation_fn=tf.nn.relu)
+            out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
+            policy = layers.softmax(out)
+
+        with tf.variable_scope("value"):
+            out = layers.flatten(input_state)
+            out = layers.fully_connected(out, num_outputs=32, activation_fn=tf.nn.relu)
+            out = layers.fully_connected(out, num_outputs=1, activation_fn=None)
+            value = tf.reshape(out, [-1])
 
     return policy, value
 
@@ -58,7 +73,8 @@ def main():
     num_actions = env.action_space.n
     input_state_shape = list(env.observation_space.shape)
     input_state_ph = tf.placeholder(dtype=tf.float32, shape=[None] + input_state_shape, name="input")
-    policy, value_function = build_policy_and_value(input_state_ph, num_actions)
+    # policy, value_function = build_separate_policy_and_value(input_state_ph, num_actions)
+    policy, value_function = build_shared_policy_and_value(input_state_ph, num_actions)
 
     def select(data, indices):
         return tf.reduce_sum(data * tf.one_hot(indices, 2, axis=-1), axis=1)
@@ -74,8 +90,8 @@ def main():
         action_log_policy = select(tf.log(policy), action_ph)
 
     trainable_vars = tf.trainable_variables()
-    policy_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "policy")
-    value_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "value")
+    policy_vars = trainable_vars
+    value_vars = trainable_vars
 
     policy_gradients = tf.gradients(tf.reduce_sum(policy_step_size_ph * gamma_power_ph * advantage * action_log_policy), policy_vars,
             name="policy_gradients")
