@@ -86,7 +86,7 @@ class Learner(object):
         self.rewards_ph = tf.placeholder(dtype=tf.float32, shape=[None], name="rewards")
         self.is_terminal_ph = tf.placeholder(dtype=tf.float32, shape=[None], name="is_terminal")
 
-        self.gamma_power_ph = tf.placeholder(dtype=tf.float32, shape=[None], name="gamme_power")
+        self.gamma_power_ph = tf.placeholder(dtype=tf.float32, shape=[None], name="gamma_power")
 
         advantage = self.rewards_ph + self.gamma_power_ph * tf.stop_gradient(next_value_function) * (1.0 - self.is_terminal_ph) - value_function
         tf.summary.histogram("value_function", value_function)
@@ -101,8 +101,10 @@ class Learner(object):
         policy_vars = trainable_vars
         value_vars = trainable_vars
 
+        value_learning_rate = 1e-4
+
         policy_optimizer = tf.train.AdamOptimizer()
-        value_optimizer = tf.train.RMSPropOptimizer(0.00025)
+        value_optimizer = tf.train.RMSPropOptimizer(value_learning_rate)
 
         with tf.variable_scope("loss"):
             policy_loss = -tf.reduce_mean(tf.stop_gradient(advantage) * action_log_policy, name="policy_loss")
@@ -182,8 +184,8 @@ def main():
     num_actions = env.action_space.n
     builder = build_shared_policy_and_value
 
-    batch_size = 50
-    simulation_depth = 5
+    batch_size = 10000
+    simulation_depth = 20
 
     learner = Learner(env, builder, simulation_depth)
     actor = Actor(env, builder)
@@ -227,8 +229,8 @@ def main():
 
                 if is_terminal:
                     learner.add_samples(states + [next_state], rewards, actions, is_terminal)
-                    summary = learner.train(session, merged_summaries)
-                    summary_writer.add_summary(summary, episode)
+                    # summary = learner.train(session, merged_summaries)
+                    # summary_writer.add_summary(summary, episode)
 
                     total_frames += step
                     total_rewards.append(total_reward)
@@ -245,9 +247,9 @@ def main():
                 else:
                     state = next_state
 
-            # if learner.sample_count() > batch_size:
-                # summary = learner.train(session, merged_summaries)
-                # summary_writer.add_summary(summary, episode)
+            if learner.sample_count() > batch_size:
+                summary = learner.train(session, merged_summaries)
+                summary_writer.add_summary(summary, episode)
 
 if __name__ == "__main__":
     main()
