@@ -9,16 +9,64 @@ import datetime
 from tensorflow.contrib import layers
 from tensorflow.core.framework import summary_pb2
 
+import matplotlib
+# matplotlib.use('Qt5Agg')
+
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+
 GAMMA = 0.99
 
 # Entropy weight.
 BETA = 0.01
 
+# Max length of the episode.
+MAX_LENGTH = 500
+
+class ValueFunctionVisualizer(object):
+
+    def __init__(self, window_size):
+        self.window_size = window_size
+        self.xdata = range(window_size)
+        self.ydata = [0 for _ in range(window_size)]
+
+        self.fig, self.ax = plt.subplots(figsize=(12, 12), dpi=80)
+        self.ax.set_aspect('equal')
+        self.ax.set_xlim(0, self.window_size)
+        self.ax.set_ylim(0, 500)
+        self.ax.hold(True)
+        self.line, = self.ax.plot(self.xdata, self.ydata, 'r-')
+
+        self.tick = 0
+
+        plt.show(block=False)
+
+        self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
+        self.fig.canvas.draw()
+        plt.draw()
+
+    def _redraw(self):
+        self.tick += 1
+        if self.tick % 5 != 1:
+            return
+
+        self.line.set_ydata(self.ydata)
+
+        self.fig.canvas.restore_region(self.background)
+        self.ax.draw_artist(self.line)
+        self.fig.canvas.blit(self.ax.bbox)
+
+    def add_value(self, ts, value):
+        self.ydata.append(value)
+        self.ydata = self.ydata[-self.window_size:]
+        self._redraw()
+ 
 
 def build_shared_policy_and_value(input_state, num_actions, reuse=False):
     with tf.variable_scope("torso", reuse=reuse):
         out = layers.flatten(input_state)
-        out = layers.fully_connected(out, num_outputs=32, activation_fn=tf.nn.relu)
+        # out = layers.fully_connected(out, num_outputs=32, activation_fn=tf.nn.relu)
+        out = layers.fully_connected(out, num_outputs=128, activation_fn=tf.nn.relu)
         with tf.variable_scope("policy"):
             policy_out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
             policy = layers.softmax(policy_out)
@@ -50,20 +98,27 @@ def scalar_summary(name, value):
     return summary_pb2.Summary(value=[summary_pb2.Summary.Value(tag=name, simple_value=value)])
 
 
+def add_timestep(state, ts):
+    return list(state) + [(MAX_LENGTH - ts) * 1.0 / MAX_LENGTH]
+
+
 class Actor(object):
 
     def __init__(self, env, model_builder):
         self.num_actions = env.action_space.n
         input_state_shape = list(env.observation_space.shape)
+        # Adding a timestep.
+        input_state_shape[0] += 1
         self.input_state_ph = tf.placeholder(dtype=tf.float32, shape=[None] + input_state_shape, name="input")
-        self.policy, _ = model_builder(self.input_state_ph, self.num_actions, reuse=True)
+        self.policy, self.value = model_builder(self.input_state_ph, self.num_actions, reuse=True)
 
     def eval_actions(self, session, state):
-        return session.run(self.policy, feed_dict={self.input_state_ph: [state]})[0]
+        policy, value = session.run([self.policy, self.value], feed_dict={self.input_state_ph: [state]})
+        return policy[0], value[0]
 
 
-def select(data, indices):
-    return tf.reduce_sum(data * tf.one_hot(indices, 2, axis=-1), axis=1)
+def select(data, indices, num_actions):
+    return tf.reduce_sum(data * tf.one_hot(indices, num_actions, axis=-1), axis=1)
 
 
 class Learner(object):
@@ -75,6 +130,7 @@ class Learner(object):
 
         num_actions = env.action_space.n
         input_state_shape = list(env.observation_space.shape)
+        input_state_shape[0] += 1
         self.input_state_ph = tf.placeholder(dtype=tf.float32, shape=[None] + input_state_shape, name="input")
         self.next_input_state_ph = tf.placeholder(dtype=tf.float32, shape=[None] + input_state_shape, name="next_input")
 
@@ -92,7 +148,7 @@ class Learner(object):
         tf.summary.histogram("value_function", value_function)
         tf.summary.histogram("advantage", advantage)
         with tf.variable_scope("action_log_policy"):
-            action_log_policy = select(tf.log(policy), self.action_ph)
+            action_log_policy = select(tf.log(policy), self.action_ph, num_actions)
 
         entropy = -tf.reduce_mean(tf.reduce_sum(policy * tf.log(policy), axis=1))
         tf.summary.scalar("entropy", entropy)
@@ -101,7 +157,7 @@ class Learner(object):
         policy_vars = trainable_vars
         value_vars = trainable_vars
 
-        value_learning_rate = 1e-4
+        value_learning_rate = 1e-2
 
         policy_optimizer = tf.train.AdamOptimizer()
         value_optimizer = tf.train.RMSPropOptimizer(value_learning_rate)
@@ -128,13 +184,15 @@ class Learner(object):
                 r = r * GAMMA + rewards[k]
             self.rewards_.append(r)
 
+            self.is_terminal_.append(last_is_terminal * (j == N))
+
         # self.states_.extend(states[:-1])
         # self.next_states_.extend(states[1:])
         # self.rewards_.extend(rewards)
         self.actions_.extend(actions)
 
-        self.is_terminal_.extend([0 for _ in range(N)])
-        self.is_terminal_[-1] = last_is_terminal
+        # self.is_terminal_.extend([0 for _ in range(N)])
+        # self.is_terminal_[-1] = last_is_terminal
 
     def sample_count(self):
         return len(self.states_)
@@ -165,7 +223,8 @@ class Learner(object):
 def main():
     # gym.upload("/tmp/cartpole-experiment-1", api_key="sk_scDpKlQS7ercGiVUZWEgw")
     # return
-    env_name = "CartPole-v0"
+    env_name = "CartPole-v1"
+    # env_name = "Pong-ram-v0"
     env = gym.make(env_name)
     # env = wrappers.Monitor(env, "/tmp/cartpole-experiment-1")
 
@@ -184,13 +243,15 @@ def main():
     num_actions = env.action_space.n
     builder = build_shared_policy_and_value
 
-    batch_size = 10000
+    batch_size = 128
     simulation_depth = 20
 
     learner = Learner(env, builder, simulation_depth)
     actor = Actor(env, builder)
 
     merged_summaries = tf.summary.merge_all()
+
+    value_function_visualizer = ValueFunctionVisualizer(500)
 
     with tf.train.SingularMonitoredSession(config=tf_config) as session:
         summary_name = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
@@ -201,7 +262,7 @@ def main():
         total_frames = 0
 
         for episode in range(episode_count):
-            state = env.reset()
+            state = add_timestep(env.reset(), 0)
 
             # Episode data.
             states = []
@@ -214,23 +275,34 @@ def main():
             show_episode = episode % 100 == 0
 
             for step in range(max_steps):
-                if show_episode:
-                    env.render()
-
-                probs = actor.eval_actions(session, state)
+                probs, value = actor.eval_actions(session, state)
                 action = np.random.choice(num_actions, p=probs)
 
+                if show_episode:
+                    env.render()
+                    # print(value)
+                    value_function_visualizer.add_value(step, value)
+
                 next_state, reward, is_terminal, info = env.step(action)
+                next_state = add_timestep(next_state, step + 1)
                 states.append(state)
                 actions.append(action)
                 rewards.append(reward)
 
                 total_reward += reward
 
+                if learner.sample_count() > batch_size:
+                    learner.add_samples(states + [next_state], rewards, actions, is_terminal)
+                    states = []
+                    rewards = []
+                    actions = []
+                    summary = learner.train(session, merged_summaries)
+                    summary_writer.add_summary(summary, episode)
+
                 if is_terminal:
                     learner.add_samples(states + [next_state], rewards, actions, is_terminal)
-                    # summary = learner.train(session, merged_summaries)
-                    # summary_writer.add_summary(summary, episode)
+                    summary = learner.train(session, merged_summaries)
+                    summary_writer.add_summary(summary, episode)
 
                     total_frames += step
                     total_rewards.append(total_reward)
@@ -246,10 +318,6 @@ def main():
                     break
                 else:
                     state = next_state
-
-            if learner.sample_count() > batch_size:
-                summary = learner.train(session, merged_summaries)
-                summary_writer.add_summary(summary, episode)
 
 if __name__ == "__main__":
     main()
