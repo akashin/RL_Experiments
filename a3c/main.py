@@ -15,7 +15,9 @@ import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-GAMMA = 0.999
+from atari_wrappers import *
+
+GAMMA = 0.99
 
 # Entropy weight.
 BETA = 0.01
@@ -23,7 +25,26 @@ BETA = 0.01
 # Max length of the episode.
 MAX_LENGTH = 500
 
-ADD_TIMESTAMP = False
+USE_HUBER = False
+DELTA = 10.0
+
+# TASK_NAME="cartpole"
+# TASK_NAME="pong"
+TASK_NAME="pong-2d"
+# TASK_NAME="breakout"
+
+
+if TASK_NAME == "cartpole":
+    ADD_TIMESTAMP = True
+else:
+    ADD_TIMESTAMP = False
+
+def huber_loss(tensor):
+    abs_error = tf.abs(tensor)
+    quadratic = tf.minimum(abs_error, DELTA)
+    linear = (abs_error - quadratic)
+    return 0.5 * quadratic**2 + DELTA * linear
+
 
 class ValueFunctionVisualizer(object):
 
@@ -65,9 +86,43 @@ class ValueFunctionVisualizer(object):
         self.ydata.append(value)
         self.ydata = self.ydata[-self.window_size:]
         self._redraw()
- 
+
+def build_shared_policy_and_value_2d(input_state, num_actions, reuse=False):
+    with tf.variable_scope("torso", reuse=reuse):
+        out = input_state
+        out = layers.convolution2d(out, num_outputs=32, kernel_size=8, stride=4, activation_fn=tf.nn.relu)
+        out = layers.convolution2d(out, num_outputs=64, kernel_size=4, stride=2, activation_fn=tf.nn.relu)
+        out = layers.convolution2d(out, num_outputs=64, kernel_size=3, stride=1, activation_fn=tf.nn.relu)
+        out = layers.flatten(out)
+        out = layers.fully_connected(out, num_outputs=512, activation_fn=tf.nn.relu)
+
+        with tf.variable_scope("policy"):
+            policy_out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
+            policy = layers.softmax(policy_out)
+
+        with tf.variable_scope("value"):
+            value_out = layers.fully_connected(out, num_outputs=1, activation_fn=None)
+            value = tf.reshape(value_out, [-1])
+
+    return policy, value
 
 def build_shared_policy_and_value(input_state, num_actions, reuse=False):
+    with tf.variable_scope("torso", reuse=reuse):
+        out = layers.flatten(input_state)
+        out = layers.fully_connected(out, num_outputs=256, activation_fn=tf.nn.relu)
+        out = layers.fully_connected(out, num_outputs=128, activation_fn=tf.nn.relu)
+        out = layers.fully_connected(out, num_outputs=64, activation_fn=tf.nn.relu)
+        with tf.variable_scope("policy"):
+            policy_out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
+            policy = layers.softmax(policy_out)
+
+        with tf.variable_scope("value"):
+            value_out = layers.fully_connected(out, num_outputs=1, activation_fn=None)
+            value = tf.reshape(value_out, [-1])
+
+    return policy, value
+
+def build_shared_policy_and_value_simple(input_state, num_actions, reuse=False):
     with tf.variable_scope("torso", reuse=reuse):
         out = layers.flatten(input_state)
         # out = layers.fully_connected(out, num_outputs=32, activation_fn=tf.nn.relu)
@@ -105,13 +160,16 @@ def scalar_summary(name, value):
 
 def add_timestep(state, ts):
     if ADD_TIMESTAMP:
-        return list(state) + [1]
+        return list(state) + [ts / MAX_LENGTH]
     else:
         return list(state)
 
 
 def preprocess_state(state, ts):
-    return add_timestep(state / 256.0, ts)
+    if TASK_NAME == "cartpole":
+        return add_timestep(state, ts)
+    else:
+        return add_timestep(state / 256.0, ts)
 
 
 
@@ -147,7 +205,7 @@ class Learner(object):
         self.input_state_ph = tf.placeholder(dtype=tf.float32, shape=[None] + input_state_shape, name="input")
         self.next_input_state_ph = tf.placeholder(dtype=tf.float32, shape=[None] + input_state_shape, name="next_input")
 
-        tf.summary.image("input", tf.reshape(self.input_state_ph, [-1, 4, 32, 1]))
+        # tf.summary.image("input", tf.reshape(self.input_state_ph, [-1, 4, 32, 1]))
         # tf.summary.image("input", tf.reshape(self.input_state_ph, [-1, 1, input_state_shape[0], 1]))
 
         policy, value_function = model_builder(self.input_state_ph, num_actions)
@@ -173,7 +231,7 @@ class Learner(object):
         policy_vars = trainable_vars
         value_vars = trainable_vars
 
-        value_learning_rate = 1e-2
+        value_learning_rate = 1e-4
 
         policy_optimizer = tf.train.AdamOptimizer()
         value_optimizer = tf.train.RMSPropOptimizer(value_learning_rate)
@@ -182,9 +240,20 @@ class Learner(object):
             policy_loss = -tf.reduce_mean(tf.stop_gradient(advantage) * action_log_policy, name="policy_loss")
             policy_loss_with_entropy = policy_loss - BETA * entropy
             tf.summary.scalar("policy_loss", policy_loss)
-            value_loss = tf.reduce_mean(tf.square(advantage), name="value_loss")
+            if USE_HUBER:
+                value_loss = tf.reduce_mean(huber_loss(advantage), name="value_loss")
+            else:
+                value_loss = tf.reduce_mean(tf.square(advantage), name="value_loss")
             tf.summary.scalar("value_loss", value_loss)
-            self.train_op = tf.group(policy_optimizer.minimize(policy_loss), value_optimizer.minimize(value_loss))
+
+            def minimize_clipped(optimizer, loss):
+                gvs = optimizer.compute_gradients(loss)
+                clipped_gvs = [(tf.clip_by_value(grad, -10., 10.), var) for grad, var in gvs if grad is not None]
+                # clipped_gvs = gvs
+                return optimizer.apply_gradients(clipped_gvs)
+
+            self.train_op = tf.group(minimize_clipped(policy_optimizer, policy_loss),
+                                     minimize_clipped(value_optimizer, value_loss))
 
     def add_samples(self, states, rewards, actions, last_is_terminal):
         N = len(actions)
@@ -236,49 +305,89 @@ class Learner(object):
         return summary
 
 
-def main():
-    # gym.upload("/tmp/cartpole-experiment-1", api_key="sk_scDpKlQS7ercGiVUZWEgw")
-    # return
-    # env_name = "CartPole-v1"
-    env_name = "Pong-ram-v0"
+def get_env_by_name(env_name):
     env = gym.make(env_name)
-    # env = wrappers.Monitor(env, "/tmp/cartpole-experiment-1")
-
     seed = 42
     env.seed(seed)
     tf.set_random_seed(seed)
     np.random.seed(seed)
+    return env
+
+
+def get_env():
+    if TASK_NAME == "pong-2d":
+        benchmark = gym.benchmark_spec('Atari40M')
+        task = benchmark.tasks[3]
+        env_id = task.env_id
+
+        env = get_env_by_name(env_id)
+        # env = wrappers.Monitor(env, "/tmp/{}".format(TASK_NAME), force=True)
+        env = wrap_deepmind(env)
+        return env
+
+    if TASK_NAME == "cartpole":
+        env_name = "CartPole-v1"
+    elif TASK_NAME == "breakout":
+        env_name = "Breakout-ram-v0"
+    elif TASK_NAME == "pong":
+        env_name = "Pong-ram-v0"
+
+    get_env_by_name(env_name)
+
+
+def main():
+    # gym.upload("/tmp/cartpole-experiment-1", api_key="sk_scDpKlQS7ercGiVUZWEgw")
+    # return
+
+    env = get_env()
 
     episode_count = 1000000
     max_steps = 10000
 
-    summaries_dir = "/tmp/cartpole/"
+    summaries_dir = "/tmp/{}".format(TASK_NAME)
 
     tf_config = tf.ConfigProto(log_device_placement=False)
 
     num_actions = env.action_space.n
-    builder = build_shared_policy_and_value
+    # builder = build_shared_policy_and_value
+    builder = build_shared_policy_and_value_2d
 
-    batch_size = 128
+    batch_size = 256
     simulation_depth = 20
 
     learner = Learner(env, builder, simulation_depth)
     actor = Actor(env, builder)
 
+    saver = tf.train.Saver()
     merged_summaries = tf.summary.merge_all()
 
     value_function_visualizer = ValueFunctionVisualizer(500)
 
-    with tf.train.SingularMonitoredSession(config=tf_config) as session:
+    SHOW_FREQUENCY = 100
+    CHECKPOINT_FREQUENCY = 100
+
+    global_step_tensor = tf.Variable(0, trainable=False, name="global_step")
+    tick_global_step = tf.assign_add(global_step_tensor, 1, name="tick_global_step")
+
+    CHECKPOINT_DIR = "/home/acid/RL/{}".format(TASK_NAME)
+    saver_hook = tf.train.CheckpointSaverHook(CHECKPOINT_DIR, save_secs=60, saver=saver)
+
+    with tf.train.SingularMonitoredSession(config=tf_config, hooks=[saver_hook]) as session:
         summary_name = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
         summary_writer = tf.summary.FileWriter(
                 os.path.join(summaries_dir, summary_name), session.graph)
+
+        checkpoint = tf.train.get_checkpoint_state(CHECKPOINT_DIR)
+        if checkpoint and checkpoint.model_checkpoint_path:
+            print("Restoring from checkpoint {}".format(checkpoint.model_checkpoint_path))
+            saver.restore(session, checkpoint.model_checkpoint_path)
 
         start_time = time.clock()
         total_frames = 0
 
         for episode in range(episode_count):
             state = preprocess_state(env.reset(), 0)
+            session.run(tick_global_step)
 
             # Episode data.
             states = []
@@ -288,9 +397,12 @@ def main():
             total_reward = 0
             total_rewards = []
 
-            show_episode = episode % 100 == 0
+            show_episode = episode % SHOW_FREQUENCY == 0
             if show_episode:
                 value_function_visualizer.init_graph()
+
+            # if episode % CHECKPOINT_FREQUENCY == 0:
+                # saver.save(session.raw_session(), 'cartpole-model', global_step=episode)
 
             for step in range(max_steps):
                 probs, value = actor.eval_actions(session, state)
@@ -323,7 +435,6 @@ def main():
                         summary = learner.train(session, merged_summaries)
                         summary_writer.add_summary(summary, total_frames)
 
-                    # total_frames += step
                     total_rewards.append(total_reward)
                     if episode % 100 == 0:
                         total_rewards = total_rewards[-100:]
